@@ -268,6 +268,10 @@ steps:
       failed_steps+="* agentic-llamaindex/rag gke cluster creation failed\n"
     fi
 
+    if [[ $(cat /workspace/llamaindex_rag_allocate_l4_gpu_result.txt) != "pass" ]]; then
+      failed_steps+="* agentic-llamaindex/rag L4 GPU allocation failed\n"
+    fi
+
     if [[ $(cat /workspace/llamaindex_rag_deploy_ollama_result.txt) != "pass" ]]; then
       failed_steps+="* agentic-llamaindex/rag ollama deployment failed\n"
     fi
@@ -324,6 +328,11 @@ steps:
 
     if [[ $(cat /workspace/llamaindex_rag_gke_cluster_result.txt) != "pass" ]]; then
       echo "agentic-llamaindex/rag gke cluster creation failed"
+      echo "error" > /workspace/check_result.txt
+    fi
+
+    if [[ $(cat /workspace/llamaindex_rag_allocate_l4_gpu_result.txt) != "pass" ]]; then
+      echo "agentic-llamaindex/rag L4 GPU allocation failed"
       echo "error" > /workspace/check_result.txt
     fi
 

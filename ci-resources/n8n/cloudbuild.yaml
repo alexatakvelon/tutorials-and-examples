@@ -285,6 +285,10 @@ steps:
       failed_steps+="* n8n gke cluster creation failed\n"
     fi
 
+    if [[ $(cat /workspace/n8n_allocate_l4_gpu_result.txt) != "pass" ]]; then
+      failed_steps+="* n8n L4 GPU allocation failed\n"
+    fi
+
     if [[ $(cat /workspace/n8n_deploy_ollama_result.txt) != "pass" ]]; then
       failed_steps+="* n8n ollama deployment failed\n"
     fi
@@ -339,7 +343,7 @@ steps:
 
     echo "pass" > /workspace/check_result.txt
 
-    for f in n8n_gke_cluster_result n8n_deploy_ollama_result n8n_deploy_n8n_result n8n_seed_database_result n8n_test_guide n8n_cleanup_gke_cluster; do
+    for f in n8n_gke_cluster_result n8n_allocate_l4_gpu_result n8n_deploy_ollama_result n8n_deploy_n8n_result n8n_seed_database_result n8n_test_guide n8n_cleanup_gke_cluster; do
       if [[ $(cat /workspace/$f.txt) != "pass" ]]; then
         echo "$f failed"
         echo "error" > /workspace/check_result.txt

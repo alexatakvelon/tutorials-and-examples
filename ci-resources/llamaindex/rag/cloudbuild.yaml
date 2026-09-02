@@ -266,6 +266,10 @@ steps:
       failed_steps+="* llamaindex/rag gke cluster creation failed\n"
     fi
 
+    if [[ $(cat /workspace/li_rag_allocate_l4_gpu_result.txt) != "pass" ]]; then
+      failed_steps+="* llamaindex/rag L4 GPU allocation failed\n"
+    fi
+
     if [[ $(cat /workspace/li_rag_deploy_ollama_result.txt) != "pass" ]]; then
       failed_steps+="* llamaindex/rag ollama deployment failed\n"
     fi
@@ -320,7 +324,7 @@ steps:
 
     echo "pass" > /workspace/check_result.txt
 
-    for f in li_rag_gke_cluster_result li_rag_deploy_ollama_result li_rag_deploy_redis_result li_rag_ingest_data_result li_rag_test_guide li_rag_cleanup_gke_cluster; do
+    for f in li_rag_gke_cluster_result li_rag_allocate_l4_gpu_result li_rag_deploy_ollama_result li_rag_deploy_redis_result li_rag_ingest_data_result li_rag_test_guide li_rag_cleanup_gke_cluster; do
       if [[ $(cat /workspace/$f.txt) != "pass" ]]; then
         echo "$f failed"
         echo "error" > /workspace/check_result.txt

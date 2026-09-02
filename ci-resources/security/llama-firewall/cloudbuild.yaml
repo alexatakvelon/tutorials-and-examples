@@ -234,6 +234,10 @@ steps:
       failed_steps+="* llama-firewall gke cluster creation failed\n"
     fi
 
+    if [[ $(cat /workspace/llama_firewall_allocate_l4_gpu_result.txt) != "pass" ]]; then
+      failed_steps+="* llama-firewall L4 GPU allocation failed\n"
+    fi
+
     if [[ $(cat /workspace/llama_firewall_test_guide.txt) != "pass" ]]; then
       failed_steps+="* llama-firewall test guide failed\n"
     fi
@@ -276,7 +280,7 @@ steps:
 
     echo "pass" > /workspace/check_result.txt
 
-    for f in llama_firewall_gke_cluster_result llama_firewall_test_guide llama_firewall_cleanup_gke_cluster; do
+    for f in llama_firewall_gke_cluster_result llama_firewall_allocate_l4_gpu_result llama_firewall_test_guide llama_firewall_cleanup_gke_cluster; do
       if [[ $(cat /workspace/$f.txt) != "pass" ]]; then
         echo "$f failed"
         echo "error" > /workspace/check_result.txt
