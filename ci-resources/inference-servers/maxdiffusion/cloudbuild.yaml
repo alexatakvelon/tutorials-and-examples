@@ -74,6 +74,19 @@ steps:
   allowFailure: true
   waitFor: ['maxdiffusion: create gke cluster']
 
+- id: 'maxdiffusion: create artifact registry repo'
+  name: 'gcr.io/cloud-builders/gcloud'
+  args:
+  - 'artifacts'
+  - 'repositories'
+  - 'create'
+  - 'ml-maxdiff-${SHORT_SHA}-${_BUILD_ID}'
+  - '--repository-format=docker'
+  - '--location=us'
+  - '--project=${PROJECT_ID}'
+  allowFailure: true
+  waitFor: ["maxdiffusion: prepare tests"]
+
 - id: 'maxdiffusion: build server image'
   name: 'gcr.io/cloud-builders/gcloud'
   dir: "/workspace/inference-servers/maxdiffusion/build/server"
@@ -84,7 +97,7 @@ steps:
   - us-docker.pkg.dev/${PROJECT_ID}/ml-maxdiff-${SHORT_SHA}-${_BUILD_ID}/max-diffusion:latest
   - '.'
   allowFailure: true
-  waitFor: ['maxdiffusion: create gke cluster']
+  waitFor: ['maxdiffusion: create artifact registry repo']
 
 - id: 'maxdiffusion: deploy server'
   name: "gcr.io/cloud-builders/kubectl"
@@ -143,6 +156,10 @@ steps:
       --location=$_MAXDIFFUSION_REGION \
       --project=$PROJECT_ID \
       --quiet
+    gcloud artifacts repositories delete ml-maxdiff-$SHORT_SHA-$_BUILD_ID \
+      --location=us \
+      --project=$PROJECT_ID \
+      --quiet || true
     echo "pass" > /workspace/maxdiff_cleanup_result.txt
   allowFailure: true
   waitFor: ['maxdiffusion: test guide']
@@ -163,9 +180,16 @@ steps:
       exit 0
     fi
 
+    jwt=$(python3 generate_jwt.py)
+    gh_token=$(curl --request POST \
+    --url "https://api.github.com/app/installations/90973651/access_tokens" \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $jwt" \
+    --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
+
     if curl -L \
       -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer $$GITHUB_TOKEN" \
+      -H "Authorization: Bearer $gh_token" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       https://api.github.com/repos/dmitriy-drogovoz-us/tutorials-and-examples/issues | jq -e '.[] | select(.labels[] | .name == "maxdiffusion") | select(.labels[] | .name == "ci/automated-issue")' > /dev/null
     then
@@ -196,12 +220,6 @@ steps:
 
       payload=$(printf '{"title":"%s","body":"%s","labels":["bug", "maxdiffusion", "ci/automated-issue"]}' "$issue_title" "$issue_body")
 
-      jwt=$(python3 generate_jwt.py)
-      gh_token=$(curl --request POST \
-      --url "https://api.github.com/app/installations/90973651/access_tokens" \
-      --header "Accept: application/vnd.github+json" \
-      --header "Authorization: Bearer $jwt" \
-      --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
 
       curl -L \
         -X POST \
@@ -243,6 +261,7 @@ substitutions:
   _USER_NAME: github
   _BUILD_ID: ${BUILD_ID:0:8}
   _ITERATION: "0"
+  _GITHUB_ISSUE: "false"
 logsBucket: gs://ai-on-gke-qss-build-logs
 options:
   substitutionOption: "ALLOW_LOOSE"

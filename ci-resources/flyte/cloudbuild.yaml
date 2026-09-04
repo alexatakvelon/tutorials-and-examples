@@ -103,14 +103,14 @@ steps:
     kubectl rollout status deployment/flyte-backend-flyte-binary --timeout=600s
 
     GRPC_PORT=$(kubectl get svc flyte-backend-flyte-binary -o jsonpath='{.spec.ports[?(@.name=="grpc")].port}')
-    if [ -z "$GRPC_PORT" ]; then
+    if [ -z "$$GRPC_PORT" ]; then
       echo "No service port named 'grpc' found - falling back to the flyte-binary chart's documented default (8089)."
       kubectl get svc flyte-backend-flyte-binary -o yaml
       GRPC_PORT=8089
     fi
-    echo "Using gRPC port: $GRPC_PORT"
+    echo "Using gRPC port: $$GRPC_PORT"
 
-    kubectl port-forward svc/flyte-backend-flyte-binary "8089:${GRPC_PORT}" &
+    kubectl port-forward svc/flyte-backend-flyte-binary "8089:$${GRPC_PORT}" &
     sleep 5s
 
     apt update
@@ -166,9 +166,16 @@ steps:
       exit 0
     fi
 
+    jwt=$(python3 generate_jwt.py)
+    gh_token=$(curl --request POST \
+    --url "https://api.github.com/app/installations/90973651/access_tokens" \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $jwt" \
+    --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
+
     if curl -L \
       -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer $$GITHUB_TOKEN" \
+      -H "Authorization: Bearer $gh_token" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       https://api.github.com/repos/dmitriy-drogovoz-us/tutorials-and-examples/issues | jq -e '.[] | select(.labels[] | .name == "flyte") | select(.labels[] | .name == "ci/automated-issue")' > /dev/null
     then
@@ -195,12 +202,6 @@ steps:
 
       payload=$(printf '{"title":"%s","body":"%s","labels":["bug", "flyte", "ci/automated-issue"]}' "$issue_title" "$issue_body")
 
-      jwt=$(python3 generate_jwt.py)
-      gh_token=$(curl --request POST \
-      --url "https://api.github.com/app/installations/90973651/access_tokens" \
-      --header "Accept: application/vnd.github+json" \
-      --header "Authorization: Bearer $jwt" \
-      --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
 
       curl -L \
         -X POST \
@@ -249,6 +250,7 @@ substitutions:
   _USER_NAME: github
   _BUILD_ID: ${BUILD_ID:0:8}
   _ITERATION: "0"
+  _GITHUB_ISSUE: "false"
 logsBucket: gs://ai-on-gke-qss-build-logs
 options:
   substitutionOption: "ALLOW_LOOSE"

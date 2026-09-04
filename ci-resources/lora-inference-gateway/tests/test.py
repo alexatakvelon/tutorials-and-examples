@@ -1,8 +1,13 @@
+import re
 import sys
 import time
 import requests
 
-SQL_KEYWORDS = ("select", "from")
+# Requires an actual SELECT ... FROM statement shape, not just both words
+# appearing anywhere - a plain-English reply can easily contain "select" and
+# "from" independently (e.g. "you could select any of these cities, away
+# from the coast, ...") without ever being SQL.
+SQL_PATTERN = re.compile(r"select\b.{0,200}?\bfrom\b", re.IGNORECASE | re.DOTALL)
 
 
 def wait_for_response(gateway_ip, model, message, timeout=180):
@@ -39,10 +44,17 @@ def test_base_and_lora_routing(gateway_ip):
     )
     print(f"sql-chat reply: {lora_reply}")
 
-    lora_reply_lower = lora_reply.lower()
-    assert all(k in lora_reply_lower for k in SQL_KEYWORDS), (
-        f"Expected the sql-chat LoRA adapter to respond with something SQL-like "
-        f"(containing {SQL_KEYWORDS}), but got: {lora_reply}"
+    assert SQL_PATTERN.search(lora_reply), (
+        f"Expected the sql-chat LoRA adapter to respond with a SELECT ... FROM "
+        f"statement, but got: {lora_reply}"
+    )
+    # If the base model's plain-English reply also looks like SQL, that's a
+    # sign both requests landed on the same backend rather than routing
+    # separately through the adapter.
+    assert not SQL_PATTERN.search(base_reply), (
+        "Expected the base model's reply to NOT look like SQL - if it does, "
+        f"the LoRA adapter may not be routing separately from the base model. "
+        f"Base reply: {base_reply}"
     )
 
 

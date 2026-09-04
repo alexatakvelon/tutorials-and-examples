@@ -91,7 +91,7 @@ steps:
   script: |
     terraform init -no-color
     terraform validate -no-color
-  waitFor: ["model-armor: generate kubeconfig"]
+  waitFor: ["model-armor: prepare tests"]
 
 - id: 'model-armor: apply gateway terraform'
   name: "gcr.io/${PROJECT_ID}/terraform"
@@ -114,7 +114,7 @@ steps:
     -auto-approve -no-color
     echo "pass" > /workspace/model_armor_apply_result.txt
   allowFailure: true
-  waitFor: ['model-armor: validate platform']
+  waitFor: ['model-armor: validate platform', 'model-armor: generate kubeconfig']
 
 - id: "model-armor: test guide"
   name: "gcr.io/cloud-builders/kubectl"
@@ -137,25 +137,25 @@ steps:
     kubectl rollout status deployment/vllm-llama3-8b-instruct --timeout=900s
 
     GATEWAY_NAME="model-armor-tutorial-gateway"
-    GATEWAY_IP=$(kubectl get gateway $GATEWAY_NAME -o jsonpath='{.status.addresses[0].value}' 2>/dev/null)
+    GATEWAY_IP=$(kubectl get gateway $$GATEWAY_NAME -o jsonpath='{.status.addresses[0].value}' 2>/dev/null)
     n=0
-    while [ -z "$GATEWAY_IP" ] && [ $n -lt 60 ]; do
+    while [ -z "$$GATEWAY_IP" ] && [ $n -lt 60 ]; do
       echo "Waiting for Gateway IP..."
       sleep 10
-      GATEWAY_IP=$(kubectl get gateway $GATEWAY_NAME -o jsonpath='{.status.addresses[0].value}' 2>/dev/null)
+      GATEWAY_IP=$(kubectl get gateway $$GATEWAY_NAME -o jsonpath='{.status.addresses[0].value}' 2>/dev/null)
       n=$((n+1))
     done
-    if [ -z "$GATEWAY_IP" ]; then
+    if [ -z "$$GATEWAY_IP" ]; then
       echo "Gateway never got an address."
       exit 1
     fi
-    echo "Gateway IP: $GATEWAY_IP"
+    echo "Gateway IP: $$GATEWAY_IP"
 
     apt update
     apt install python3-venv --assume-yes
     apt install python3-pip --assume-yes
     pip install requests
-    python3 /workspace/security/model-armor/tests/test.py "$GATEWAY_IP"
+    python3 /workspace/security/model-armor/tests/test.py "$$GATEWAY_IP"
 
     echo "pass" > /workspace/model_armor_test_guide.txt
   allowFailure: true
@@ -217,9 +217,16 @@ steps:
       exit 0
     fi
 
+    jwt=$(python3 generate_jwt.py)
+    gh_token=$(curl --request POST \
+    --url "https://api.github.com/app/installations/90973651/access_tokens" \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $jwt" \
+    --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
+
     if curl -L \
       -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer $$GITHUB_TOKEN" \
+      -H "Authorization: Bearer $gh_token" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       https://api.github.com/repos/dmitriy-drogovoz-us/tutorials-and-examples/issues | jq -e '.[] | select(.labels[] | .name == "model-armor") | select(.labels[] | .name == "ci/automated-issue")' > /dev/null
     then
@@ -254,12 +261,6 @@ steps:
 
       payload=$(printf '{"title":"%s","body":"%s","labels":["bug", "model-armor", "ci/automated-issue"]}' "$issue_title" "$issue_body")
 
-      jwt=$(python3 generate_jwt.py)
-      gh_token=$(curl --request POST \
-      --url "https://api.github.com/app/installations/90973651/access_tokens" \
-      --header "Accept: application/vnd.github+json" \
-      --header "Authorization: Bearer $jwt" \
-      --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
 
       curl -L \
         -X POST \
@@ -300,6 +301,7 @@ substitutions:
   _USER_NAME: github
   _BUILD_ID: ${BUILD_ID:0:8}
   _ITERATION: "0"
+  _GITHUB_ISSUE: "false"
 logsBucket: gs://ai-on-gke-qss-build-logs
 options:
   substitutionOption: "ALLOW_LOOSE"

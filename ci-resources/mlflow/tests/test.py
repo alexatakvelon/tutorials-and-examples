@@ -25,8 +25,13 @@ def test_finetuned_model_serves(base_url, timeout=600):
     # mlflow.transformers' pyfunc wrapper for a text-generation pipeline
     # returns a list of {"generated_text": "..."} dicts.
     assert body, "Expected a non-empty response from the fine-tuned model."
-    text = str(body)
-    assert text.strip(), f"Expected non-empty generated text, got: {body}"
+    assert isinstance(body, list) and "generated_text" in body[0], (
+        f"Expected a list of {{'generated_text': ...}} dicts, got: {body}"
+    )
+    generated_text = body[0]["generated_text"]
+    assert generated_text and generated_text.strip(), (
+        f"Expected non-empty generated text, got: {body}"
+    )
 
 
 base_url = sys.argv[1]

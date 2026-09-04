@@ -125,17 +125,22 @@ steps:
     kubectl rollout status deployment/custom-metrics-stackdriver-adapter -n custom-metrics --timeout=300s
 
     GSA_NAME="msa-$SHORT_SHA-$_BUILD_ID"
-    gcloud iam service-accounts create "$GSA_NAME" \
+    gcloud iam service-accounts create "$$GSA_NAME" \
       --project="$PROJECT_ID" \
       --display-name="Custom Metrics Stackdriver Adapter GSA (CI $SHORT_SHA-$_BUILD_ID)"
 
+    # Written immediately after creation (not at the end of the script) so
+    # cleanup can find and delete this GSA even if a later step in this
+    # script times out.
+    echo "$$GSA_NAME" > /workspace/autoscale_gsa_name.txt
+
     gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-      --member="serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+      --member="serviceAccount:$${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
       --role="roles/monitoring.viewer" \
       --condition=None
 
     gcloud iam service-accounts add-iam-policy-binding \
-      "${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+      "$${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
       --project="$PROJECT_ID" \
       --role="roles/iam.workloadIdentityUser" \
       --member="serviceAccount:${PROJECT_ID}.svc.id.goog[custom-metrics/custom-metrics-stackdriver-adapter]"
@@ -144,14 +149,13 @@ steps:
       custom-metrics-stackdriver-adapter \
       --namespace custom-metrics \
       --overwrite \
-      iam.gke.io/gcp-service-account="${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+      iam.gke.io/gcp-service-account="$${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
     # Workload Identity bindings can take a short moment to propagate; restart the
     # adapter so it picks up the newly-annotated service account identity.
     kubectl rollout restart deployment/custom-metrics-stackdriver-adapter -n custom-metrics
     kubectl rollout status deployment/custom-metrics-stackdriver-adapter -n custom-metrics --timeout=300s
 
-    echo "$GSA_NAME" > /workspace/autoscale_gsa_name.txt
     echo "pass" > /workspace/autoscale_deploy_metrics_result.txt
   allowFailure: true
   waitFor: ['autoscale: deploy vllm server']
@@ -193,8 +197,8 @@ steps:
       sleep 30s
     done
 
-    kill $LOOP_PID 2>/dev/null || true
-    kill $PORT_FORWARD_PID 2>/dev/null || true
+    kill $$LOOP_PID 2>/dev/null || true
+    kill $$PORT_FORWARD_PID 2>/dev/null || true
 
     kubectl describe hpa gemma-server-hpa
 
@@ -221,10 +225,10 @@ steps:
     if [ -f /workspace/autoscale_gsa_name.txt ]; then
       GSA_NAME=$(cat /workspace/autoscale_gsa_name.txt)
       gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
-        --member="serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+        --member="serviceAccount:$${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
         --role="roles/monitoring.viewer" --condition=None || true
       gcloud iam service-accounts delete \
-        "${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+        "$${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
         --project="$PROJECT_ID" --quiet || true
     fi
 
@@ -253,9 +257,16 @@ steps:
       exit 0
     fi
 
+    jwt=$(python3 generate_jwt.py)
+    gh_token=$(curl --request POST \
+    --url "https://api.github.com/app/installations/90973651/access_tokens" \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $jwt" \
+    --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
+
     if curl -L \
       -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer $$GITHUB_TOKEN" \
+      -H "Authorization: Bearer $gh_token" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       https://api.github.com/repos/dmitriy-drogovoz-us/tutorials-and-examples/issues | jq -e '.[] | select(.labels[] | .name == "autoscale") | select(.labels[] | .name == "ci/automated-issue")' > /dev/null
     then
@@ -294,12 +305,6 @@ steps:
 
       payload=$(printf '{"title":"%s","body":"%s","labels":["bug", "autoscale", "ci/automated-issue"]}' "$issue_title" "$issue_body")
 
-      jwt=$(python3 generate_jwt.py)
-      gh_token=$(curl --request POST \
-      --url "https://api.github.com/app/installations/90973651/access_tokens" \
-      --header "Accept: application/vnd.github+json" \
-      --header "Authorization: Bearer $jwt" \
-      --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
 
       curl -L \
         -X POST \
@@ -363,6 +368,7 @@ substitutions:
   _USER_NAME: github
   _BUILD_ID: ${BUILD_ID:0:8}
   _ITERATION: "0"
+  _GITHUB_ISSUE: "false"
 logsBucket: gs://ai-on-gke-qss-build-logs
 options:
   substitutionOption: "ALLOW_LOOSE"

@@ -28,6 +28,23 @@ import time
 import requests
 
 
+def _request_with_retry(session, method, url, timeout=60, retry_timeout=60, **kwargs):
+    # n8n's REST API does DB writes on first boot; right after the
+    # port-forward comes up it may not be accepting connections yet.
+    deadline = time.time() + retry_timeout
+    last_error = None
+    while time.time() < deadline:
+        try:
+            response = session.request(method, url, timeout=timeout, **kwargs)
+            response.raise_for_status()
+            return response
+        except requests.exceptions.RequestException as e:
+            last_error = str(e)
+            print(f"Request to {url} failed ({last_error}), retrying...")
+            time.sleep(5)
+    raise AssertionError(f"Request to {url} never succeeded. Last error: {last_error}")
+
+
 def setup_owner(session, base_url):
     url = f"{base_url}/rest/owner/setup"
     payload = {
@@ -36,28 +53,24 @@ def setup_owner(session, base_url):
         "lastName": "Test",
         "password": "CiTestPassword123!",
     }
-    response = session.post(url, json=payload, timeout=60)
-    response.raise_for_status()
+    response = _request_with_retry(session, "POST", url, json=payload)
     return response.json()
 
 
 def create_credential(session, base_url, name, cred_type, data):
     url = f"{base_url}/rest/credentials"
     payload = {"name": name, "type": cred_type, "data": data}
-    response = session.post(url, json=payload, timeout=60)
-    response.raise_for_status()
+    response = _request_with_retry(session, "POST", url, json=payload)
     return response.json()["data"]["id"]
 
 
 def import_and_activate_workflow(session, base_url, workflow):
-    create_response = session.post(f"{base_url}/rest/workflows", json=workflow, timeout=60)
-    create_response.raise_for_status()
+    create_response = _request_with_retry(session, "POST", f"{base_url}/rest/workflows", json=workflow)
     created = create_response.json()["data"]
     workflow_id = created["id"]
 
     created["active"] = True
-    activate_response = session.patch(f"{base_url}/rest/workflows/{workflow_id}", json=created, timeout=60)
-    activate_response.raise_for_status()
+    _request_with_retry(session, "PATCH", f"{base_url}/rest/workflows/{workflow_id}", json=created)
 
     return workflow_id
 

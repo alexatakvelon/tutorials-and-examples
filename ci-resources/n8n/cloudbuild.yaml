@@ -136,13 +136,13 @@ steps:
 
     echo "fail" > /workspace/n8n_deploy_ollama_result.txt
 
-    kubectl delete -f /workspace/gpu-l4-allocation.yaml
+    kubectl delete -f /workspace/gpu-l4-allocation.yaml --ignore-not-found
     # terraform already rendered this from templates/ollama/ollama.yaml.tftpl
     # with the real workload-identity service account and GCS bucket filled in
     kubectl apply -f /workspace/n8n/gen/ollama.yaml
     kubectl rollout status deployment/ollama --timeout=600s
     sleep 60s
-    kubectl exec $(kubectl get pod -l app=ollama -o name) -c ollama -- ollama pull llama3.2
+    kubectl exec "$(kubectl get pod -l app=ollama -o name)" -c ollama -- ollama pull llama3.2
 
     echo "pass" > /workspace/n8n_deploy_ollama_result.txt
   allowFailure: true
@@ -187,14 +187,14 @@ steps:
     DB_USER=$(terraform output -raw cloudsql_db_user)
     DB_PASSWORD=$(kubectl get secret db-secret -o jsonpath='{.data.password}' | base64 -d)
 
-    echo "$DB_HOST" > /workspace/n8n_db_host.txt
-    echo "$DB_NAME" > /workspace/n8n_db_name.txt
-    echo "$DB_USER" > /workspace/n8n_db_user.txt
-    echo "$DB_PASSWORD" > /workspace/n8n_db_password.txt
+    echo "$$DB_HOST" > /workspace/n8n_db_host.txt
+    echo "$$DB_NAME" > /workspace/n8n_db_name.txt
+    echo "$$DB_USER" > /workspace/n8n_db_user.txt
+    echo "$$DB_PASSWORD" > /workspace/n8n_db_password.txt
 
     kubectl run psql-seed --rm -i --restart=Never --image=postgres:15 \
-      --env="PGPASSWORD=$DB_PASSWORD" \
-      --command -- psql -h $DB_HOST -U $DB_USER -d $DB_NAME -c \
+      --env="PGPASSWORD=$$DB_PASSWORD" \
+      --command -- psql -h $$DB_HOST -U $$DB_USER -d $$DB_NAME -c \
       "CREATE TABLE zephyr_orders (id SERIAL PRIMARY KEY, item TEXT, quantity INT); INSERT INTO zephyr_orders (item, quantity) VALUES ('nebula lantern', 12);"
 
     echo "pass" > /workspace/n8n_seed_database_result.txt
@@ -203,6 +203,8 @@ steps:
 
 - id: 'n8n: test guide'
   name: "gcr.io/cloud-builders/kubectl"
+  env:
+  - "KUBE_LOAD_CONFIG_FILE=false"
   entrypoint: 'sh'
   args:
   - '-c'
@@ -224,7 +226,7 @@ steps:
     DB_PASSWORD=$(cat /workspace/n8n_db_password.txt)
 
     python3 /workspace/n8n/tests/test.py http://127.0.0.1:5678 \
-      "$DB_HOST" 5432 "$DB_NAME" "$DB_USER" "$DB_PASSWORD" \
+      "$$DB_HOST" 5432 "$$DB_NAME" "$$DB_USER" "$$DB_PASSWORD" \
       zephyr_orders /workspace/n8n/workflow.json
 
     echo "pass" > /workspace/n8n_test_guide.txt
@@ -270,9 +272,16 @@ steps:
       exit 0
     fi
 
+    jwt=$(python3 generate_jwt.py)
+    gh_token=$(curl --request POST \
+    --url "https://api.github.com/app/installations/90973651/access_tokens" \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $jwt" \
+    --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
+
     if curl -L \
       -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer $$GITHUB_TOKEN" \
+      -H "Authorization: Bearer $gh_token" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       https://api.github.com/repos/dmitriy-drogovoz-us/tutorials-and-examples/issues | jq -e '.[] | select(.labels[] | .name == "n8n") | select(.labels[] | .name == "ci/automated-issue")' > /dev/null
     then
@@ -315,12 +324,6 @@ steps:
 
       payload=$(printf '{"title":"%s","body":"%s","labels":["bug", "n8n", "ci/automated-issue"]}' "$issue_title" "$issue_body")
 
-      jwt=$(python3 generate_jwt.py)
-      gh_token=$(curl --request POST \
-      --url "https://api.github.com/app/installations/90973651/access_tokens" \
-      --header "Accept: application/vnd.github+json" \
-      --header "Authorization: Bearer $jwt" \
-      --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
 
       curl -L \
         -X POST \
@@ -361,6 +364,7 @@ substitutions:
   _USER_NAME: github
   _BUILD_ID: ${BUILD_ID:0:8}
   _ITERATION: "0"
+  _GITHUB_ISSUE: "false"
 logsBucket: gs://ai-on-gke-qss-build-logs
 options:
   substitutionOption: "ALLOW_LOOSE"

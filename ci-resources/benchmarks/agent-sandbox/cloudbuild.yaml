@@ -65,7 +65,7 @@ steps:
     set -e
     echo "fail" > /workspace/agent_sandbox_benchmark_result.txt
 
-    # $HOME (and therefore $HOME/.kube/config, written by the "generate
+    # $$HOME (and therefore $$HOME/.kube/config, written by the "generate
     # kubeconfig" step above) persists across Cloud Build steps just like
     # /workspace does, so no manual copy is needed here.
     git clone --depth 1 https://github.com/kubernetes/perf-tests.git /tmp/perf-tests
@@ -76,7 +76,7 @@ steps:
     go run cmd/clusterloader.go \
       --testconfig=./config.yaml \
       --provider=gke \
-      --kubeconfig=$HOME/.kube/config \
+      --kubeconfig=$$HOME/.kube/config \
       --report-dir=./test-results
 
     # ClusterLoader2 exits non-zero on its own if the 15s PodStartupLatency SLO
@@ -121,9 +121,16 @@ steps:
       exit 0
     fi
 
+    jwt=$(python3 generate_jwt.py)
+    gh_token=$(curl --request POST \
+    --url "https://api.github.com/app/installations/90973651/access_tokens" \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $jwt" \
+    --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
+
     if curl -L \
       -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer $$GITHUB_TOKEN" \
+      -H "Authorization: Bearer $gh_token" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       https://api.github.com/repos/dmitriy-drogovoz-us/tutorials-and-examples/issues | jq -e '.[] | select(.labels[] | .name == "agent-sandbox-benchmark") | select(.labels[] | .name == "ci/automated-issue")' > /dev/null
     then
@@ -150,12 +157,6 @@ steps:
 
       payload=$(printf '{"title":"%s","body":"%s","labels":["bug", "agent-sandbox-benchmark", "ci/automated-issue"]}' "$issue_title" "$issue_body")
 
-      jwt=$(python3 generate_jwt.py)
-      gh_token=$(curl --request POST \
-      --url "https://api.github.com/app/installations/90973651/access_tokens" \
-      --header "Accept: application/vnd.github+json" \
-      --header "Authorization: Bearer $jwt" \
-      --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
 
       curl -L \
         -X POST \
@@ -204,6 +205,7 @@ substitutions:
   _USER_NAME: github
   _BUILD_ID: ${BUILD_ID:0:8}
   _ITERATION: "0"
+  _GITHUB_ISSUE: "false"
 logsBucket: gs://ai-on-gke-qss-build-logs
 options:
   substitutionOption: "ALLOW_LOOSE"

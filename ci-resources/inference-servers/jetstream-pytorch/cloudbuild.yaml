@@ -87,30 +87,30 @@ steps:
     echo "fail" > /workspace/jspt_workload_identity_result.txt
 
     GSA_NAME="jspt-$SHORT_SHA-$_BUILD_ID"
-    echo "$GSA_NAME" > /workspace/jspt_gsa_name.txt
+    echo "$$GSA_NAME" > /workspace/jspt_gsa_name.txt
 
     gcloud storage buckets create gs://ml-jspt-$SHORT_SHA-$_BUILD_ID \
       --project=$PROJECT_ID --location=$_JETSTREAM_PYTORCH_REGION
 
-    gcloud iam service-accounts create "$GSA_NAME" --project=$PROJECT_ID
+    gcloud iam service-accounts create "$$GSA_NAME" --project=$PROJECT_ID
 
     gcloud projects add-iam-policy-binding $PROJECT_ID \
-      --member="serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+      --member="serviceAccount:$${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
       --role=roles/storage.objectUser --condition=None
 
     gcloud projects add-iam-policy-binding $PROJECT_ID \
-      --member="serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+      --member="serviceAccount:$${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
       --role=roles/storage.insightsCollectorService --condition=None
 
     gcloud iam service-accounts add-iam-policy-binding \
-      "${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+      "$${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
       --project=$PROJECT_ID \
       --role=roles/iam.workloadIdentityUser \
       --member="serviceAccount:${PROJECT_ID}.svc.id.goog[default/default]"
 
     kubectl annotate serviceaccount default \
       --overwrite \
-      iam.gke.io/gcp-service-account="${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+      iam.gke.io/gcp-service-account="$${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
     echo "pass" > /workspace/jspt_workload_identity_result.txt
   allowFailure: true
@@ -258,13 +258,13 @@ steps:
     if [ -f /workspace/jspt_gsa_name.txt ]; then
       GSA_NAME=$(cat /workspace/jspt_gsa_name.txt)
       gcloud projects remove-iam-policy-binding $PROJECT_ID \
-        --member="serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+        --member="serviceAccount:$${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
         --role=roles/storage.objectUser --condition=None || true
       gcloud projects remove-iam-policy-binding $PROJECT_ID \
-        --member="serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+        --member="serviceAccount:$${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
         --role=roles/storage.insightsCollectorService --condition=None || true
       gcloud iam service-accounts delete \
-        "${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+        "$${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
         --project=$PROJECT_ID --quiet || true
     fi
 
@@ -294,9 +294,16 @@ steps:
       exit 0
     fi
 
+    jwt=$(python3 generate_jwt.py)
+    gh_token=$(curl --request POST \
+    --url "https://api.github.com/app/installations/90973651/access_tokens" \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $jwt" \
+    --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
+
     if curl -L \
       -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer $$GITHUB_TOKEN" \
+      -H "Authorization: Bearer $gh_token" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       https://api.github.com/repos/dmitriy-drogovoz-us/tutorials-and-examples/issues | jq -e '.[] | select(.labels[] | .name == "jetstream-pytorch") | select(.labels[] | .name == "ci/automated-issue")' > /dev/null
     then
@@ -335,12 +342,6 @@ steps:
 
       payload=$(printf '{"title":"%s","body":"%s","labels":["bug", "jetstream-pytorch", "ci/automated-issue"]}' "$issue_title" "$issue_body")
 
-      jwt=$(python3 generate_jwt.py)
-      gh_token=$(curl --request POST \
-      --url "https://api.github.com/app/installations/90973651/access_tokens" \
-      --header "Accept: application/vnd.github+json" \
-      --header "Authorization: Bearer $jwt" \
-      --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
 
       curl -L \
         -X POST \
@@ -382,6 +383,7 @@ substitutions:
   _USER_NAME: github
   _BUILD_ID: ${BUILD_ID:0:8}
   _ITERATION: "0"
+  _GITHUB_ISSUE: "false"
 logsBucket: gs://ai-on-gke-qss-build-logs
 options:
   substitutionOption: "ALLOW_LOOSE"

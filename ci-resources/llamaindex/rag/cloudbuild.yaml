@@ -136,11 +136,11 @@ steps:
 
     echo "fail" > /workspace/li_rag_deploy_ollama_result.txt
 
-    kubectl delete -f /workspace/gpu-l4-allocation.yaml
+    kubectl delete -f /workspace/gpu-l4-allocation.yaml --ignore-not-found
     kubectl apply -f /workspace/llamaindex/rag/gen/ollama-deployment.yaml
     kubectl rollout status deployment/ollama --timeout=600s
     sleep 60s
-    kubectl exec $(kubectl get pod -l app=ollama -o name) -c ollama -- ollama pull gemma2:9b
+    kubectl exec "$(kubectl get pod -l app=ollama -o name)" -c ollama -- ollama pull gemma2:9b
 
     echo "pass" > /workspace/li_rag_deploy_ollama_result.txt
   allowFailure: true
@@ -251,9 +251,16 @@ steps:
       exit 0
     fi
 
+    jwt=$(python3 generate_jwt.py)
+    gh_token=$(curl --request POST \
+    --url "https://api.github.com/app/installations/90973651/access_tokens" \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $jwt" \
+    --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
+
     if curl -L \
       -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer $$GITHUB_TOKEN" \
+      -H "Authorization: Bearer $gh_token" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       https://api.github.com/repos/dmitriy-drogovoz-us/tutorials-and-examples/issues | jq -e '.[] | select(.labels[] | .name == "llamaindex-rag") | select(.labels[] | .name == "ci/automated-issue")' > /dev/null
     then
@@ -296,12 +303,6 @@ steps:
 
       payload=$(printf '{"title":"%s","body":"%s","labels":["bug", "llamaindex-rag", "ci/automated-issue"]}' "$issue_title" "$issue_body")
 
-      jwt=$(python3 generate_jwt.py)
-      gh_token=$(curl --request POST \
-      --url "https://api.github.com/app/installations/90973651/access_tokens" \
-      --header "Accept: application/vnd.github+json" \
-      --header "Authorization: Bearer $jwt" \
-      --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
 
       curl -L \
         -X POST \
@@ -343,6 +344,7 @@ substitutions:
   _AUTOPILOT_CLUSTER: "true"
   _BUILD_ID: ${BUILD_ID:0:8}
   _ITERATION: "0"
+  _GITHUB_ISSUE: "false"
 logsBucket: gs://ai-on-gke-qss-build-logs
 options:
   substitutionOption: "ALLOW_LOOSE"

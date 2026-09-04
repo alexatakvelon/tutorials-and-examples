@@ -140,7 +140,7 @@ steps:
         --from-literal=token=$$HF_TOKEN \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    kubectl delete -f /workspace/gpu-l4-allocation.yaml
+    kubectl delete -f /workspace/gpu-l4-allocation.yaml --ignore-not-found
 
     kubectl apply -f vllm/vllm-llama.yaml
     kubectl rollout status deployment/vllm-llama3 --timeout=600s
@@ -150,17 +150,27 @@ steps:
     # server has actually finished loading the 8B model - wait for the real
     # startup marker in the logs, same technique already proven in
     # ci-resources/adk/llama/vllm/cloudbuild.yaml.
-    pod_name=$(kubectl get pods -l app=llama3-server -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     sleep_seconds=10
     search_string="Application startup complete."
+    max_wait_seconds=600
+    elapsed=0
     while true; do
-      if kubectl logs "$pod_name" --tail=100 | grep -q -m 1 "$search_string"; then
+      # Re-resolve the pod name each iteration - if the pod was evicted/OOM-killed
+      # and recreated while the 8B model was still loading, a name captured once
+      # up front would point at a pod that no longer exists and this loop would
+      # spin on kubectl logs errors forever.
+      pod_name=$(kubectl get pods -l app=llama3-server -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+      if [[ -n "$pod_name" ]] && kubectl logs "$pod_name" --tail=100 2>/dev/null | grep -q -m 1 "$search_string"; then
         echo "SUCCESS: vLLM server is up."
         break
-      else
-        echo "  Not ready yet, sleeping ${sleep_seconds}s."
-        sleep ${sleep_seconds}s
       fi
+      if [[ $elapsed -ge $max_wait_seconds ]]; then
+        echo "ERROR: vLLM server did not report startup complete within ${max_wait_seconds}s."
+        exit 1
+      fi
+      echo "  Not ready yet (pod: ${pod_name:-<none>}), sleeping ${sleep_seconds}s."
+      sleep ${sleep_seconds}s
+      elapsed=$((elapsed + sleep_seconds))
     done
 
     # terraform already rendered this from templates/secured-agent.yaml.tftpl
@@ -219,9 +229,16 @@ steps:
       exit 0
     fi
 
+    jwt=$(python3 generate_jwt.py)
+    gh_token=$(curl --request POST \
+    --url "https://api.github.com/app/installations/90973651/access_tokens" \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $jwt" \
+    --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
+
     if curl -L \
       -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer $$GITHUB_TOKEN" \
+      -H "Authorization: Bearer $gh_token" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       https://api.github.com/repos/dmitriy-drogovoz-us/tutorials-and-examples/issues | jq -e '.[] | select(.labels[] | .name == "llama-firewall") | select(.labels[] | .name == "ci/automated-issue")' > /dev/null
     then
@@ -252,12 +269,6 @@ steps:
 
       payload=$(printf '{"title":"%s","body":"%s","labels":["bug", "llama-firewall", "ci/automated-issue"]}' "$issue_title" "$issue_body")
 
-      jwt=$(python3 generate_jwt.py)
-      gh_token=$(curl --request POST \
-      --url "https://api.github.com/app/installations/90973651/access_tokens" \
-      --header "Accept: application/vnd.github+json" \
-      --header "Authorization: Bearer $jwt" \
-      --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
 
       curl -L \
         -X POST \
@@ -298,6 +309,7 @@ substitutions:
   _USER_NAME: github
   _BUILD_ID: ${BUILD_ID:0:8}
   _ITERATION: "0"
+  _GITHUB_ISSUE: "false"
 logsBucket: gs://ai-on-gke-qss-build-logs
 options:
   substitutionOption: "ALLOW_LOOSE"

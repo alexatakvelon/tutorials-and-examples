@@ -67,18 +67,6 @@ steps:
   allowFailure: true
   waitFor: ['finetune-gemma-l4: create gke cluster']
 
-- id: 'finetune-gemma-l4: build image'
-  name: 'gcr.io/cloud-builders/gcloud'
-  dir: "/workspace/finetuning-gemma-3-1b-it-on-l4"
-  args:
-  - 'builds'
-  - 'submit'
-  - '--tag'
-  - us-docker.pkg.dev/${PROJECT_ID}/ml-fgl4-${SHORT_SHA}-${_BUILD_ID}/finetune-gemma-gpu:latest
-  - '.'
-  allowFailure: true
-  waitFor: ['finetune-gemma-l4: create gke cluster']
-
 - id: 'finetune-gemma-l4: create artifact registry repo'
   name: 'gcr.io/cloud-builders/gcloud'
   args:
@@ -90,7 +78,19 @@ steps:
   - '--location=us'
   - '--project=${PROJECT_ID}'
   allowFailure: true
-  waitFor: ['finetune-gemma-l4: generate kubeconfig']
+  waitFor: ["finetune-gemma-l4: prepare tests"]
+
+- id: 'finetune-gemma-l4: build image'
+  name: 'gcr.io/cloud-builders/gcloud'
+  dir: "/workspace/finetuning-gemma-3-1b-it-on-l4"
+  args:
+  - 'builds'
+  - 'submit'
+  - '--tag'
+  - us-docker.pkg.dev/${PROJECT_ID}/ml-fgl4-${SHORT_SHA}-${_BUILD_ID}/finetune-gemma-gpu:latest
+  - '.'
+  allowFailure: true
+  waitFor: ['finetune-gemma-l4: create artifact registry repo']
 
 - id: 'finetune-gemma-l4: run finetuning job'
   name: "gcr.io/cloud-builders/kubectl"
@@ -104,7 +104,7 @@ steps:
     echo "fail" > /workspace/finetune_gemma_l4_job_result.txt
 
     NEW_MODEL="gemma-3-1b-it-sql-finetuned-ci-$SHORT_SHA-$_BUILD_ID"
-    echo "$NEW_MODEL" > /workspace/finetune_gemma_l4_new_model.txt
+    echo "$$NEW_MODEL" > /workspace/finetune_gemma_l4_new_model.txt
 
     kubectl create secret generic hf-secret \
       --from-literal=hf_api_token=$$HF_TOKEN \
@@ -117,7 +117,7 @@ steps:
     # match an unrelated env var that happens to share the same value.
     sed \
       -e "s#<IMAGE_URL>#us-docker.pkg.dev/${PROJECT_ID}/ml-fgl4-${SHORT_SHA}-${_BUILD_ID}/finetune-gemma-gpu:latest#" \
-      -e "/name: NEW_MODEL/{n;s#value: \".*\"#value: \"${NEW_MODEL}\"#}" \
+      -e "/name: NEW_MODEL/{n;s#value: \".*\"#value: \"$${NEW_MODEL}\"#}" \
       -e '/name: DATASET_LIMIT/{n;s#value: ".*"#value: "50"#}' \
       -e '/name: LOGGING_STEPS/{n;s#value: ".*"#value: "2"#}' \
       finetune.yaml > /workspace/finetune-gemma-l4-job.yaml
@@ -145,7 +145,7 @@ steps:
     pip install huggingface_hub
 
     NEW_MODEL=$(cat /workspace/finetune_gemma_l4_new_model.txt)
-    python3 /workspace/finetuning-gemma-3-1b-it-on-l4/tests/test.py "$NEW_MODEL" "$$HF_TOKEN"
+    python3 /workspace/finetuning-gemma-3-1b-it-on-l4/tests/test.py "$$NEW_MODEL" "$$HF_TOKEN"
 
     echo "pass" > /workspace/finetune_gemma_l4_test_guide.txt
   allowFailure: true
@@ -188,9 +188,16 @@ steps:
       exit 0
     fi
 
+    jwt=$(python3 generate_jwt.py)
+    gh_token=$(curl --request POST \
+    --url "https://api.github.com/app/installations/90973651/access_tokens" \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $jwt" \
+    --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
+
     if curl -L \
       -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer $$GITHUB_TOKEN" \
+      -H "Authorization: Bearer $gh_token" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       https://api.github.com/repos/dmitriy-drogovoz-us/tutorials-and-examples/issues | jq -e '.[] | select(.labels[] | .name == "finetuning-gemma-3-1b-it-on-l4") | select(.labels[] | .name == "ci/automated-issue")' > /dev/null
     then
@@ -221,12 +228,6 @@ steps:
 
       payload=$(printf '{"title":"%s","body":"%s","labels":["bug", "finetuning-gemma-3-1b-it-on-l4", "ci/automated-issue"]}' "$issue_title" "$issue_body")
 
-      jwt=$(python3 generate_jwt.py)
-      gh_token=$(curl --request POST \
-      --url "https://api.github.com/app/installations/90973651/access_tokens" \
-      --header "Accept: application/vnd.github+json" \
-      --header "Authorization: Bearer $jwt" \
-      --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
 
       curl -L \
         -X POST \
@@ -267,6 +268,7 @@ substitutions:
   _USER_NAME: github
   _BUILD_ID: ${BUILD_ID:0:8}
   _ITERATION: "0"
+  _GITHUB_ISSUE: "false"
 logsBucket: gs://ai-on-gke-qss-build-logs
 options:
   substitutionOption: "ALLOW_LOOSE"

@@ -46,6 +46,15 @@ steps:
     - |
       cp -r /workspace/ci-resources/metaflow/tests /workspace/metaflow/tests
 
+      # image_registry.tf hardcodes the AR repo name (metaflow-tutorial-tf)
+      # instead of deriving a per-build unique one, so a repo left behind by
+      # a run that aborted before its own terraform destroy would collide
+      # with the next run's apply. Best-effort delete any leftover repo.
+      gcloud artifacts repositories delete metaflow-tutorial-tf \
+        --location=us \
+        --project=$PROJECT_ID \
+        --quiet || true
+
 - id: "metaflow: validate platform"
   name: "gcr.io/${PROJECT_ID}/terraform"
   dir: "/workspace/metaflow/terraform"
@@ -131,7 +140,7 @@ steps:
     echo "fail" > /workspace/metaflow_run_result.txt
 
     NEW_MODEL="finetunned-gemma2-9b-ci-$SHORT_SHA-$_BUILD_ID"
-    echo "$NEW_MODEL" > /workspace/metaflow_new_model.txt
+    echo "$$NEW_MODEL" > /workspace/metaflow_new_model.txt
 
     kubectl create secret generic hf-token \
       --from-literal=HF_TOKEN=$$HF_TOKEN \
@@ -141,7 +150,7 @@ steps:
     # than the tutorial's default full-scale run, and use a build-unique
     # model name so runs don't clobber each other's HF Hub repo.
     sed -e "s/\"DATASET_LIMIT\": \"1000\",/\"DATASET_LIMIT\": \"50\",/" \
-        -e "s/new_model=\"finetunned-gemma2-9b\"/new_model=\"${NEW_MODEL}\"/" \
+        -e "s/new_model=\"finetunned-gemma2-9b\"/new_model=\"$${NEW_MODEL}\"/" \
         finetune_gemma.py > /workspace/finetune_gemma_ci.py
 
     kubectl port-forward svc/metaflow-metadata-svc 8080:8080 &
@@ -181,7 +190,7 @@ steps:
     pip install huggingface_hub
 
     NEW_MODEL=$(cat /workspace/metaflow_new_model.txt)
-    python3 /workspace/metaflow/tests/test.py "$NEW_MODEL" "$$HF_TOKEN"
+    python3 /workspace/metaflow/tests/test.py "$$NEW_MODEL" "$$HF_TOKEN"
 
     echo "pass" > /workspace/metaflow_test_guide.txt
   allowFailure: true
@@ -225,9 +234,16 @@ steps:
       exit 0
     fi
 
+    jwt=$(python3 generate_jwt.py)
+    gh_token=$(curl --request POST \
+    --url "https://api.github.com/app/installations/90973651/access_tokens" \
+    --header "Accept: application/vnd.github+json" \
+    --header "Authorization: Bearer $jwt" \
+    --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
+
     if curl -L \
       -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer $$GITHUB_TOKEN" \
+      -H "Authorization: Bearer $gh_token" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       https://api.github.com/repos/dmitriy-drogovoz-us/tutorials-and-examples/issues | jq -e '.[] | select(.labels[] | .name == "metaflow") | select(.labels[] | .name == "ci/automated-issue")' > /dev/null
     then
@@ -262,12 +278,6 @@ steps:
 
       payload=$(printf '{"title":"%s","body":"%s","labels":["bug", "metaflow", "ci/automated-issue"]}' "$issue_title" "$issue_body")
 
-      jwt=$(python3 generate_jwt.py)
-      gh_token=$(curl --request POST \
-      --url "https://api.github.com/app/installations/90973651/access_tokens" \
-      --header "Accept: application/vnd.github+json" \
-      --header "Authorization: Bearer $jwt" \
-      --header "X-GitHub-Api-Version: 2022-11-28" | jq -r .token)
 
       curl -L \
         -X POST \
@@ -308,6 +318,7 @@ substitutions:
   _USER_NAME: github
   _BUILD_ID: ${BUILD_ID:0:8}
   _ITERATION: "0"
+  _GITHUB_ISSUE: "false"
 logsBucket: gs://ai-on-gke-qss-build-logs
 options:
   substitutionOption: "ALLOW_LOOSE"
