@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from rag_demo.agents.coordinator import MultiStepCoordinator
+from rag_demo_agents_under_test.coordinator import MultiStepCoordinator
 
 INCEPTION_BLOB = (
     "Title: Inception\n"

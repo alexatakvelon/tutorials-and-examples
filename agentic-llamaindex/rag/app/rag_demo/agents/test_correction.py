@@ -1,7 +1,7 @@
 import json
 from unittest.mock import MagicMock
 
-from rag_demo.agents.correction import CorrectionAgent
+from rag_demo_agents_under_test.correction import CorrectionAgent
 
 
 def _llm_returning(text: str) -> MagicMock:

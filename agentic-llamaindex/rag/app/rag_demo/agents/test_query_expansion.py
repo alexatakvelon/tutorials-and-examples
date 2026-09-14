@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock
 
-from rag_demo.agents.query_expansion import QueryExpander
+from rag_demo_agents_under_test.query_expansion import QueryExpander
 
 
 def _llm_returning(text: str) -> MagicMock:

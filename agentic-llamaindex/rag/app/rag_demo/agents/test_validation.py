@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock
 
-from rag_demo.agents.validation import ValidationAgent
+from rag_demo_agents_under_test.validation import ValidationAgent
 
 
 def _llm_returning(text: str) -> MagicMock:
