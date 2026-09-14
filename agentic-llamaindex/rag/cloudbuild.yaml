@@ -1,4 +1,18 @@
 steps:
+- name: 'python:3.12-slim'
+  entrypoint: 'bash'
+  args:
+    - '-c'
+    - |
+      set -e
+      pip install --quiet pytest
+      # Run from inside rag_demo/agents rather than `pytest rag_demo/agents`:
+      # rag_demo/ has a real __init__.py, and pytest's collector imports
+      # every __init__.py it walks through on the way to the test files,
+      # which would pull in rag_demo's real (redisvl-dependent) package
+      # init even though these tests don't need it.
+      cd rag_demo/agents
+      pytest .
 - name: 'gcr.io/cloud-builders/docker'
   args: [ 'build', '-t', 'us-docker.pkg.dev/$PROJECT_ID/${_IMAGE_REPO_NAME}/llamaindex-rag-demo:latest', '.' ]
 images:

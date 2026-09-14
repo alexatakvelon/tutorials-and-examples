@@ -1,0 +1,11 @@
+# to run, `cd benchmarks/pod-snapshots/images/helper` then
+# `gcloud builds submit --config cloudbuild.yaml .`
+steps:
+- name: 'python:3.12-slim'
+  entrypoint: 'bash'
+  args:
+    - '-c'
+    - |
+      set -e
+      pip install --quiet pytest
+      pytest helper
